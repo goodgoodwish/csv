@@ -1,10 +1,22 @@
 use anyhow::{bail, Result};
 use std::env;
+use csv::Reader;
 
 pub fn run() -> Result<()> {
     let csv_file = input_filename()?;
     println!("csv_file {csv_file}");
 
+    input_data(&csv_file)?;
+
+    Ok(())
+}
+
+fn input_data(csv_file: &str) -> Result<()> {
+    let mut rdr = Reader::from_path(csv_file)?;
+    for result in rdr.records() {
+        let record = result?;
+        println!("{:?}", record);
+    }
     Ok(())
 }
 

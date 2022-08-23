@@ -1,5 +1,5 @@
 use anyhow::Result;
-use csv::*;
+use pay_tx::run;
 
 fn main() -> Result<()> {
     println!("Hello, CSV world!");
