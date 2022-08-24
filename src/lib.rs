@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use std::env;
 use csv::Reader;
 use serde::Deserialize;
@@ -36,14 +36,11 @@ fn withdraw(tx: &Tx) -> Result<()> {
 }
 
 fn data_from_csv(csv_file: &str) -> Result<Vec<Tx>> {
-    let mut res: Vec<Tx> = vec![];
     let mut rdr = Reader::from_path(csv_file)?;
-    for row in rdr.deserialize() {
-        let tx: Tx = row?;
-        println!("{tx:?}", );
-        res.push(tx);
-    }
-    Ok(res)
+    let res = rdr.deserialize()
+        .map(|r| r.map_err(|e| anyhow!("{}", e)))
+        .collect::<Result<Vec<Tx>>>();
+    res
 }
 
 fn input_filename() -> Result<String> {
@@ -63,7 +60,7 @@ struct Tx {
     amount: f64,
 }
 
-fn rec_from_csv(csv_file: &str) -> Result<()> {
+fn _rec_from_csv(csv_file: &str) -> Result<()> {
     let mut rdr = Reader::from_path(csv_file)?;
     for result in rdr.records() {
         let record = result?;
@@ -71,6 +68,18 @@ fn rec_from_csv(csv_file: &str) -> Result<()> {
     }
     Ok(())
 }
+
+fn _data_vec_from_csv(csv_file: &str) -> Result<Vec<Tx>> {
+    let mut rdr = Reader::from_path(csv_file)?;
+    let mut res: Vec<Tx> = vec![];
+    for row in rdr.deserialize() {
+        let tx: Tx = row?;
+        println!("{tx:?}", );
+        res.push(tx);
+    }
+    Ok(res)
+}
+
 // pub fn go() -> Result<(), Box<dyn Error>> {
 //     let contents = "abc";
 
