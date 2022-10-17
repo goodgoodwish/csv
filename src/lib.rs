@@ -241,16 +241,22 @@ fn chargeback(
 
 fn data_from_csv(csv_file: &str) -> Result<Vec<Tx>> {
     let mut rdr = Reader::from_path(csv_file)?;
-    let res = rdr
-        .deserialize()
-        .map(|r| r.map_err(|e| anyhow!("{}", e)))
-        // .map(|r| {
-        //     let mut record = r.unwrap();
-        //     record.trim();
-        //     record
-        // })
-        .collect::<Result<Vec<Tx>>>();
-    res
+    // let res = rdr
+    //     .deserialize()
+    //     .map(|r| r.map_err(|e| anyhow!("{}", e)))
+    //     .collect::<Result<Vec<Tx>>>();
+    // res
+
+    let res = rdr.records()
+        .map(|r| {
+            let mut record = r.unwrap();
+            record.trim();
+            let tx: Tx = record.deserialize(None).unwrap();
+            tx
+        })
+        // .map(|r| r.map_err(|e| anyhow!("{}", e)))
+        .collect::<Vec<Tx>>();
+    Ok(res)
 }
 
 fn input_filename() -> Result<String> {
