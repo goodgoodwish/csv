@@ -5,9 +5,10 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::env;
 
-use futures::{stream, Stream, StreamExt};
+use futures::{stream, StreamExt};
+
 use std::fs::File;
-use std::io::{self, BufRead, BufReader};
+use std::io::{BufRead, BufReader};
 
 type Bal = HashMap<usize, Balance>;
 
@@ -26,17 +27,20 @@ pub async fn run_steam() -> Result<()> {
     //     println!("line {line:?}");
     // }
 
-    let stream = stream::iter(read_iter);
+    let stream = stream::iter(read_iter); // convert iterator to stream.
     // let line_str = stream.collect::<Vec<_>>().await;
     // println!("stream line_str {line_str:?}");
 
     let mut bal: Bal = HashMap::new();
     let mut tx_amt: HashMap<usize, f64> = HashMap::new();
     let mut dispute_txs: HashSet<usize> = HashSet::new();
+    let buf_factor = 5;
 
     let res = stream
-        .map(|line| get_tx(&line.unwrap()[..]))
+        .map(|line| get_tx(line.unwrap()))
+        .buffer_unordered(buf_factor)
         .map(|x| process_tx_async(&x, &mut bal, &mut tx_amt, &mut dispute_txs))
+        // .buffer_unordered(buf_factor)
         .collect::<Vec<_>>()
         .await;
     println!("stream res {res:?}");
@@ -44,7 +48,7 @@ pub async fn run_steam() -> Result<()> {
     Ok(())
 }
 
-fn get_tx(line: &str) -> Tx {
+async fn get_tx(line: String) -> Tx {
     let items = line.split(',').collect::<Vec<&str>>();
     let mut record = StringRecord::from(items);
     record.trim();
@@ -75,7 +79,7 @@ pub fn run() -> Result<()> {
     let csv_file = input_filename()?;
     println!("csv_file {csv_file}");
 
-    let txs = data_from_csv(&csv_file)?;
+    let txs = data_from_csv_trim(&csv_file)?;
     process_tx(&txs)?;
 
     Ok(())
@@ -239,24 +243,29 @@ fn chargeback(
     Ok(())
 }
 
-fn data_from_csv(csv_file: &str) -> Result<Vec<Tx>> {
+fn _data_from_csv_no_space(csv_file: &str) -> Result<Vec<Tx>> {
+    // csv file must be cleaned up, without spaces between fields.
     let mut rdr = Reader::from_path(csv_file)?;
-    // let res = rdr
-    //     .deserialize()
-    //     .map(|r| r.map_err(|e| anyhow!("{}", e)))
-    //     .collect::<Result<Vec<Tx>>>();
-    // res
+    let res = rdr
+        .deserialize()
+        .map(|r| r.map_err(|e| anyhow!("{}", e)))
+        .collect::<Result<Vec<Tx>>>();
+    res
+}
 
-    let res = rdr.records()
+fn data_from_csv_trim(csv_file: &str) -> Result<Vec<Tx>> {
+    // trim extra spacess before deserialize to struct data.
+    let mut rdr = Reader::from_path(csv_file)?;
+    let res = rdr.records() // yield the iterator is a Result<StringRecord, Error>
         .map(|r| {
-            let mut record = r.unwrap();
+            let mut record = r?; // r type is Result<StringRecord, Error>
             record.trim();
-            let tx: Tx = record.deserialize(None).unwrap();
+            let tx = record.deserialize(None);  // -> Result<D> , D is the struct type,
             tx
         })
-        // .map(|r| r.map_err(|e| anyhow!("{}", e)))
-        .collect::<Vec<Tx>>();
-    Ok(res)
+        .map(|r| r.map_err(|e| anyhow!("csv read error: {e}")))
+        .collect::<Result<Vec<Tx>>>();
+    res
 }
 
 fn input_filename() -> Result<String> {
