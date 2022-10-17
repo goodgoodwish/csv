@@ -1,10 +1,75 @@
 use anyhow::{anyhow, bail, Result};
 use csv::Reader;
+use csv::StringRecord;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::env;
 
+use futures::{stream, Stream, StreamExt};
+use std::fs::File;
+use std::io::{self, BufRead, BufReader};
+
 type Bal = HashMap<usize, Balance>;
+
+pub async fn run_steam() -> Result<()> {
+    let csv_file = input_filename()?;
+    println!("csv_file {csv_file}");
+
+    // let txs = data_from_csv(&csv_file)?;
+    // process_tx(&txs)?;
+
+    let file = File::open(csv_file)?;
+    let reader = BufReader::new(file);
+    let mut read_iter = reader.lines();
+    read_iter.next();
+    // for line in read_iter {
+    //     println!("line {line:?}");
+    // }
+
+    let stream = stream::iter(read_iter);
+    // let line_str = stream.collect::<Vec<_>>().await;
+    // println!("stream line_str {line_str:?}");
+
+    let mut bal: Bal = HashMap::new();
+    let mut tx_amt: HashMap<usize, f64> = HashMap::new();
+    let mut dispute_txs: HashSet<usize> = HashSet::new();
+
+    let res = stream
+        .map(|line| get_tx(&line.unwrap()[..]))
+        .map(|x| process_tx_async(&x, &mut bal, &mut tx_amt, &mut dispute_txs))
+        .collect::<Vec<_>>()
+        .await;
+    println!("stream res {res:?}");
+
+    Ok(())
+}
+
+fn get_tx(line: &str) -> Tx {
+    let items = line.split(',').collect::<Vec<&str>>();
+    let mut record = StringRecord::from(items);
+    record.trim();
+    let tx: Tx = record.deserialize(None).unwrap();
+    tx
+}
+
+fn process_tx_async(
+    tx: &Tx,
+    bal: &mut Bal,
+    tx_amt: &mut HashMap<usize, f64>,
+    dispute_txs: &mut HashSet<usize>,
+) -> Result<()> {
+    match &tx.tx_type[..] {
+        "deposit" => deposit(&tx, bal, tx_amt)?,
+        "withdrawal" => withdraw(&tx, bal, tx_amt)?,
+        "dispute" => dispute(&tx, bal, tx_amt, dispute_txs)?,
+        "resolve" => resolve(&tx, bal, tx_amt, dispute_txs)?,
+        "chargeback" => chargeback(&tx, bal, tx_amt, dispute_txs)?,
+        _ => (),
+    }
+
+    print_result(&bal)?;
+    Ok(())
+}
 
 pub fn run() -> Result<()> {
     let csv_file = input_filename()?;
@@ -32,7 +97,7 @@ fn process_tx(txs: &[Tx]) -> Result<()> {
         }
     }
 
-    // println!("bal {bal:?}\n tx_amt {tx_amt:?}");
+    // println!("tx_amt {tx_amt:?}");
     print_result(&bal)?;
 
     Ok(())
@@ -179,6 +244,11 @@ fn data_from_csv(csv_file: &str) -> Result<Vec<Tx>> {
     let res = rdr
         .deserialize()
         .map(|r| r.map_err(|e| anyhow!("{}", e)))
+        // .map(|r| {
+        //     let mut record = r.unwrap();
+        //     record.trim();
+        //     record
+        // })
         .collect::<Result<Vec<Tx>>>();
     res
 }
@@ -194,13 +264,13 @@ fn input_filename() -> Result<String> {
 
 fn print_result(bal: &Bal) -> Result<()> {
     println!("client, available, held, total, locked");
-    for (_, client_bal) in bal.into_iter() {
+    for (_, client_bal) in bal {
         let Balance {
             client,
             available,
             held,
             locked,
-        } = *client_bal;
+        } = client_bal;
         let total = available + held;
         println!("{client}, {available}, {held}, {total}, {locked}");
     }
