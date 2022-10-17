@@ -39,8 +39,11 @@ pub async fn run_steam() -> Result<()> {
     let res = stream
         .map(|line| get_tx(line.unwrap()))
         .buffer_unordered(buf_factor)
-        .map(|x| process_tx_async(&x, &mut bal, &mut tx_amt, &mut dispute_txs))
-        // .buffer_unordered(buf_factor)
+        .map(|x| {
+            process_tx_async(x, &mut bal, &mut tx_amt, &mut dispute_txs).unwrap_or(());
+            async move {0_usize}
+        })
+        .buffer_unordered(buf_factor)
         .collect::<Vec<_>>()
         .await;
     println!("stream res {res:?}");
@@ -56,11 +59,11 @@ async fn get_tx(line: String) -> Tx {
     tx
 }
 
-fn process_tx_async(
-    tx: &Tx,
-    bal: &mut Bal,
-    tx_amt: &mut HashMap<usize, f64>,
-    dispute_txs: &mut HashSet<usize>,
+fn process_tx_async<'a>(
+    tx: Tx,
+    bal: &'a mut Bal,
+    tx_amt: &'a mut HashMap<usize, f64>,
+    dispute_txs: &'a mut HashSet<usize>,
 ) -> Result<()> {
     match &tx.tx_type[..] {
         "deposit" => deposit(&tx, bal, tx_amt)?,
