@@ -1,7 +1,8 @@
 use anyhow::{anyhow, bail, Result};
-use std::env;
 use csv::Reader;
 use serde::Deserialize;
+use std::env;
+use std::collections::HashMap;
 
 pub fn run() -> Result<()> {
     let csv_file = input_filename()?;
@@ -14,30 +15,44 @@ pub fn run() -> Result<()> {
 }
 
 fn process_tx(txs: &[Tx]) -> Result<()> {
+    let mut bal: HashMap<usize, Balance> = HashMap::new();
+
     for tx in txs {
         match &tx.tx_type[..] {
-            "deposit" => deposit(&tx)?,
-            "withdrawal" => withdraw(&tx)?,
+            "deposit" => deposit(&tx, &mut bal)?,
+            "withdrawal" => withdraw(&tx, &mut bal)?,
             _ => (),
         }
     }
 
+    println!("bal {bal:?}");
+
     Ok(())
 }
 
-fn deposit(tx: &Tx) -> Result<()> {
+fn deposit(tx: &Tx, bal: &mut HashMap<usize, Balance>) -> Result<()> {
     println!("deposit {tx:?}");
+    let client = tx.client;
+    if !bal.contains_key(&client) {
+        println!("Cleint {} not exists", client);
+        bal.insert(client, Balance::new(client));
+    }
+    // let client_bal = bal.get_mut(&client).unwrap();
+    // client_bal.available += tx.amount;
+    let client_data = bal.entry(client).or_insert(Balance::new(client));
+    client_data.available += tx.amount;
     Ok(())
 }
 
-fn withdraw(tx: &Tx) -> Result<()> {
+fn withdraw(tx: &Tx, bal: &mut HashMap<usize, Balance>) -> Result<()> {
     println!("withdraw {tx:?}");
     Ok(())
 }
 
 fn data_from_csv(csv_file: &str) -> Result<Vec<Tx>> {
     let mut rdr = Reader::from_path(csv_file)?;
-    let res = rdr.deserialize()
+    let res = rdr
+        .deserialize()
         .map(|r| r.map_err(|e| anyhow!("{}", e)))
         .collect::<Result<Vec<Tx>>>();
     res
@@ -60,6 +75,23 @@ struct Tx {
     amount: f64,
 }
 
+#[derive(Debug)]
+struct Balance {
+    client: usize,
+    available: f64,
+    held: f64,
+}
+
+impl Balance {
+    fn new(client: usize) -> Self {
+        Balance {
+            client,
+            available: 0.0,
+            held: 0.0,
+        }
+    }
+}
+
 fn _rec_from_csv(csv_file: &str) -> Result<()> {
     let mut rdr = Reader::from_path(csv_file)?;
     for result in rdr.records() {
@@ -74,7 +106,7 @@ fn _data_vec_from_csv(csv_file: &str) -> Result<Vec<Tx>> {
     let mut res: Vec<Tx> = vec![];
     for row in rdr.deserialize() {
         let tx: Tx = row?;
-        println!("{tx:?}", );
+        println!("{tx:?}",);
         res.push(tx);
     }
     Ok(res)
