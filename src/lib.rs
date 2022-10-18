@@ -25,29 +25,31 @@ pub async fn run_steam() -> Result<()> {
     let file = File::open(csv_file)?;
     let reader = BufReader::new(file);
     let mut read_iter = reader.lines();
+    // skip header
     read_iter.next();
-    // for line in read_iter {
-    //     println!("line {line:?}");
-    // }
 
     // convert iterator to stream.
     let stream = stream::iter(read_iter);
-    // let line_str = stream.collect::<Vec<_>>().await;  // experiment stream iterator,
-    // println!("stream line_str {line_str:?}");
 
     let mut bal: Bal = HashMap::new();
     let mut tx_amt: HashMap<usize, f64> = HashMap::new();
     let mut dispute_txs: HashSet<usize> = HashSet::new();
     let buf_factor = 5;
 
-    let rw_lock = Arc::new(RwLock::new(HashMap::new()));
+    // create N RW_locks to distribute and reduce the write_lock wait time, here N = 256, u8 type.
+    let mut inner = HashMap::new();
+    for i in 0..=u8::max_value() {
+        inner.insert(i, RwLock::new(HashMap::new()));
+    }
+    let rw_lock_map = Arc::new(inner);
 
     let res = stream
         .map(|line| get_tx(line.unwrap()))
         .buffer_unordered(buf_factor)
         .map(|x| {
-            let rw_lock = Arc::clone(&rw_lock);
-            process_tx_async(&x, &mut bal, &mut tx_amt, &mut dispute_txs, rw_lock).unwrap_or(());
+            let rw_lock_map = Arc::clone(&rw_lock_map);
+            process_tx_async(&x, &mut bal, &mut tx_amt, &mut dispute_txs, rw_lock_map)
+                .unwrap_or(());
             async move { 0_usize }
         })
         .buffer_unordered(buf_factor)
@@ -71,13 +73,15 @@ fn process_tx_async(
     bal: &mut Bal,
     tx_amt: &mut HashMap<usize, f64>,
     dispute_txs: &mut HashSet<usize>,
-    rw_lock: Arc<RwLock<HashMap<usize, Mutex<usize>>>>,
+    rw_lock_map: Arc<HashMap<u8, RwLock<HashMap<usize, Mutex<usize>>>>>,
 ) -> Result<()> {
-    let id = tx.client;
+    let client_id = tx.client;
     loop {
+        let rw_lock_id = client_id as u8; // id % 256, map client_id to a rw_lock,
+        let rw_lock = &rw_lock_map[&rw_lock_id]; // prefilled, must exists.
         // Assume that the element already exists
         let client_lock = rw_lock.read().expect("RwLock poisoned");
-        if let Some(data_lock) = client_lock.get(&id) {
+        if let Some(data_lock) = client_lock.get(&client_id) {
             let mut _lock = data_lock.lock().expect("Mutex poisoned");
 
             match &tx.tx_type[..] {
@@ -93,10 +97,10 @@ fn process_tx_async(
         drop(client_lock);
         let mut client_lock = rw_lock.write().expect("RwLock poisoned");
 
-        // We use HashMap::entry to handle the case where another thread
-        // inserted the same key while where we are unlocked.
+        // We use HashMap::entry to handle the case when another thread
+        // inserted the same key, while it is unlocked.
         thread::sleep(Duration::from_millis(5));
-        client_lock.entry(id).or_insert_with(|| Mutex::new(0));
+        client_lock.entry(client_id).or_insert_with(|| Mutex::new(0));
     }
 
     print_result(bal)?;
