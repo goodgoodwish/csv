@@ -10,14 +10,17 @@ use futures::{stream, StreamExt};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
+use std::sync::{Arc, Mutex, RwLock};
+use std::thread;
+use std::time::Duration;
+
+// global variable
+
 type Bal = HashMap<usize, Balance>;
 
 pub async fn run_steam() -> Result<()> {
     let csv_file = input_filename()?;
     println!("csv_file {csv_file}");
-
-    // let txs = data_from_csv(&csv_file)?;
-    // process_tx(&txs)?;
 
     let file = File::open(csv_file)?;
     let reader = BufReader::new(file);
@@ -27,8 +30,9 @@ pub async fn run_steam() -> Result<()> {
     //     println!("line {line:?}");
     // }
 
-    let stream = stream::iter(read_iter); // convert iterator to stream.
-    // let line_str = stream.collect::<Vec<_>>().await;
+    // convert iterator to stream.
+    let stream = stream::iter(read_iter);
+    // let line_str = stream.collect::<Vec<_>>().await;  // experiment stream iterator,
     // println!("stream line_str {line_str:?}");
 
     let mut bal: Bal = HashMap::new();
@@ -36,12 +40,15 @@ pub async fn run_steam() -> Result<()> {
     let mut dispute_txs: HashSet<usize> = HashSet::new();
     let buf_factor = 5;
 
+    let rw_lock = Arc::new(RwLock::new(HashMap::new()));
+
     let res = stream
         .map(|line| get_tx(line.unwrap()))
         .buffer_unordered(buf_factor)
         .map(|x| {
-            process_tx_async(x, &mut bal, &mut tx_amt, &mut dispute_txs).unwrap_or(());
-            async move {0_usize}
+            let rw_lock = Arc::clone(&rw_lock);
+            process_tx_async(&x, &mut bal, &mut tx_amt, &mut dispute_txs, rw_lock).unwrap_or(());
+            async move { 0_usize }
         })
         .buffer_unordered(buf_factor)
         .collect::<Vec<_>>()
@@ -59,22 +66,40 @@ async fn get_tx(line: String) -> Tx {
     tx
 }
 
-fn process_tx_async<'a>(
-    tx: Tx,
-    bal: &'a mut Bal,
-    tx_amt: &'a mut HashMap<usize, f64>,
-    dispute_txs: &'a mut HashSet<usize>,
+fn process_tx_async(
+    tx: &Tx,
+    bal: &mut Bal,
+    tx_amt: &mut HashMap<usize, f64>,
+    dispute_txs: &mut HashSet<usize>,
+    rw_lock: Arc<RwLock<HashMap<usize, Mutex<usize>>>>,
 ) -> Result<()> {
-    match &tx.tx_type[..] {
-        "deposit" => deposit(&tx, bal, tx_amt)?,
-        "withdrawal" => withdraw(&tx, bal, tx_amt)?,
-        "dispute" => dispute(&tx, bal, tx_amt, dispute_txs)?,
-        "resolve" => resolve(&tx, bal, tx_amt, dispute_txs)?,
-        "chargeback" => chargeback(&tx, bal, tx_amt, dispute_txs)?,
-        _ => (),
+    let id = tx.client;
+    loop {
+        // Assume that the element already exists
+        let client_lock = rw_lock.read().expect("RwLock poisoned");
+        if let Some(data_lock) = client_lock.get(&id) {
+            let mut _lock = data_lock.lock().expect("Mutex poisoned");
+
+            match &tx.tx_type[..] {
+                "deposit" => deposit(tx, bal, tx_amt)?,
+                "withdrawal" => withdraw(tx, bal, tx_amt)?,
+                "dispute" => dispute(tx, bal, tx_amt, dispute_txs)?,
+                "resolve" => resolve(tx, bal, tx_amt, dispute_txs)?,
+                "chargeback" => chargeback(tx, bal, tx_amt, dispute_txs)?,
+                _ => (),
+            }
+            break;
+        }
+        drop(client_lock);
+        let mut client_lock = rw_lock.write().expect("RwLock poisoned");
+
+        // We use HashMap::entry to handle the case where another thread
+        // inserted the same key while where we are unlocked.
+        thread::sleep(Duration::from_millis(5));
+        client_lock.entry(id).or_insert_with(|| Mutex::new(0));
     }
 
-    print_result(&bal)?;
+    print_result(bal)?;
     Ok(())
 }
 
@@ -95,11 +120,11 @@ fn process_tx(txs: &[Tx]) -> Result<()> {
 
     for tx in txs {
         match &tx.tx_type[..] {
-            "deposit" => deposit(&tx, &mut bal, &mut tx_amt)?,
-            "withdrawal" => withdraw(&tx, &mut bal, &mut tx_amt)?,
-            "dispute" => dispute(&tx, &mut bal, &mut tx_amt, &mut dispute_txs)?,
-            "resolve" => resolve(&tx, &mut bal, &mut tx_amt, &mut dispute_txs)?,
-            "chargeback" => chargeback(&tx, &mut bal, &mut tx_amt, &mut dispute_txs)?,
+            "deposit" => deposit(tx, &mut bal, &mut tx_amt)?,
+            "withdrawal" => withdraw(tx, &mut bal, &mut tx_amt)?,
+            "dispute" => dispute(tx, &mut bal, &mut tx_amt, &mut dispute_txs)?,
+            "resolve" => resolve(tx, &mut bal, &mut tx_amt, &mut dispute_txs)?,
+            "chargeback" => chargeback(tx, &mut bal, &mut tx_amt, &mut dispute_txs)?,
             _ => (),
         }
     }
@@ -117,13 +142,13 @@ fn deposit(tx: &Tx, bal: &mut Bal, tx_amt: &mut HashMap<usize, f64>) -> Result<(
         return Ok(());
     }
     let client = tx.client;
-    if !bal.contains_key(&client) {
+    bal.entry(client).or_insert_with(|| {
         println!("Cleint {} not exists", client);
-        bal.insert(client, Balance::new(client));
-    }
+        Balance::new(client)
+    });
     // let client_bal = bal.get_mut(&client).unwrap();
     // client_bal.available += tx.amount;
-    let client_data = bal.entry(client).or_insert(Balance::new(client));
+    let client_data = bal.entry(client).or_insert_with(|| Balance::new(client));
     if client_data.locked {
         println!("Cleint {} is locked, return", client);
         return Ok(());
@@ -145,7 +170,7 @@ fn withdraw(tx: &Tx, bal: &mut Bal, tx_amt: &mut HashMap<usize, f64>) -> Result<
         return Ok(());
     }
 
-    let client_data = bal.entry(client).or_insert(Balance::new(client));
+    let client_data = bal.entry(client).or_insert_with(|| Balance::new(client));
     if client_data.locked {
         println!("Cleint {} is locked, return", client);
         return Ok(());
@@ -176,7 +201,7 @@ fn dispute(
         return Ok(());
     }
 
-    let client_data = bal.entry(client).or_insert(Balance::new(client));
+    let client_data = bal.entry(client).or_insert_with(|| Balance::new(client));
     if client_data.locked {
         println!("Warning! Cleint {} is locked, return", client);
         return Ok(());
@@ -208,7 +233,7 @@ fn resolve(
         println!("Warning! Cleint {} not exists", client);
         return Ok(());
     }
-    let client_data = bal.entry(client).or_insert(Balance::new(client));
+    let client_data = bal.entry(client).or_insert_with(|| Balance::new(client));
     if !tx_amt.contains_key(&tx.tx_id) {
         println!("Warning! tx {} not exists", tx.tx_id);
         return Ok(());
@@ -236,7 +261,7 @@ fn chargeback(
         println!("Warning! Cleint {} not exists", client);
         return Ok(());
     }
-    let client_data = bal.entry(client).or_insert(Balance::new(client));
+    let client_data = bal.entry(client).or_insert_with(|| Balance::new(client));
     if !tx_amt.contains_key(&tx.tx_id) {
         println!("Warning! tx {} not exists", tx.tx_id);
         return Ok(());
@@ -259,12 +284,12 @@ fn _data_from_csv_no_space(csv_file: &str) -> Result<Vec<Tx>> {
 fn data_from_csv_trim(csv_file: &str) -> Result<Vec<Tx>> {
     // trim extra spacess before deserialize to struct data.
     let mut rdr = Reader::from_path(csv_file)?;
-    let res = rdr.records() // yield the iterator is a Result<StringRecord, Error>
+    let res = rdr
+        .records() // yield the iterator is a Result<StringRecord, Error>
         .map(|r| {
             let mut record = r?; // r type is Result<StringRecord, Error>
             record.trim();
-            let tx = record.deserialize(None);  // -> Result<D> , D is the struct type,
-            tx
+            record.deserialize(None) // -> Result<D> , D is the struct type Tx,
         })
         .map(|r| r.map_err(|e| anyhow!("csv read error: {e}")))
         .collect::<Result<Vec<Tx>>>();
@@ -282,7 +307,7 @@ fn input_filename() -> Result<String> {
 
 fn print_result(bal: &Bal) -> Result<()> {
     println!("client, available, held, total, locked");
-    for (_, client_bal) in bal {
+    for client_bal in bal.values() {
         let Balance {
             client,
             available,
