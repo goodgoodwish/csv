@@ -48,8 +48,12 @@ pub async fn run_stream() -> Result<()> {
         .buffer_unordered(buf_factor)
         .map(|x| {
             let rw_lock_map = Arc::clone(&rw_lock_map);
-            process_tx_async(x, &mut bal, &mut tx_amt, &mut dispute_txs, rw_lock_map)
-                .unwrap_or(());
+            match process_tx_async(x, &mut bal, &mut tx_amt, &mut dispute_txs, rw_lock_map) {
+                Ok(()) => (),
+                Err(_e) => {
+                    // logging.warn!("Error {}", e); // log error into a database or file...etc.
+                },
+            }
             async move { 0_usize }
         })
         .buffer_unordered(buf_factor)
