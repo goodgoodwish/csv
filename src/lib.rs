@@ -18,7 +18,7 @@ use std::time::Duration;
 
 type Bal = HashMap<usize, Balance>;
 
-pub async fn run_steam() -> Result<()> {
+pub async fn run_stream() -> Result<()> {
     let csv_file = input_filename()?;
     println!("csv_file {csv_file}");
 
@@ -44,11 +44,11 @@ pub async fn run_steam() -> Result<()> {
     let rw_lock_map = Arc::new(inner);
 
     let res = stream
-        .map(|line| get_tx(line.unwrap()))
+        .map(|line| get_tx(line.unwrap()) )
         .buffer_unordered(buf_factor)
         .map(|x| {
             let rw_lock_map = Arc::clone(&rw_lock_map);
-            process_tx_async(&x, &mut bal, &mut tx_amt, &mut dispute_txs, rw_lock_map)
+            process_tx_async(x, &mut bal, &mut tx_amt, &mut dispute_txs, rw_lock_map)
                 .unwrap_or(());
             async move { 0_usize }
         })
@@ -60,26 +60,27 @@ pub async fn run_steam() -> Result<()> {
     Ok(())
 }
 
-async fn get_tx(line: String) -> Tx {
+async fn get_tx(line: String) -> Result<Tx> {
     let items = line.split(',').collect::<Vec<&str>>();
     let mut record = StringRecord::from(items);
     record.trim();
-    let tx: Tx = record.deserialize(None).unwrap();
-    tx
+    let tx: Tx = record.deserialize(None)?;
+    Ok(tx)
 }
 
 fn process_tx_async(
-    tx: &Tx,
+    tx: Result<Tx>,
     bal: &mut Bal,
     tx_amt: &mut HashMap<usize, f64>,
     dispute_txs: &mut HashSet<usize>,
     rw_lock_map: Arc<HashMap<u8, RwLock<HashMap<usize, Mutex<usize>>>>>,
 ) -> Result<()> {
+    let tx = &tx?;
     let client_id = tx.client;
     loop {
         let rw_lock_id = client_id as u8; // id % 256, map client_id to a rw_lock,
         let rw_lock = &rw_lock_map[&rw_lock_id]; // prefilled, must exists.
-        // Assume that the element already exists
+                                                 // Assume that the element already exists
         let client_lock = rw_lock.read().expect("RwLock poisoned");
         if let Some(data_lock) = client_lock.get(&client_id) {
             let mut _lock = data_lock.lock().expect("Mutex poisoned");
@@ -100,7 +101,9 @@ fn process_tx_async(
         // We use HashMap::entry to handle the case when another thread
         // inserted the same key, while it is unlocked.
         thread::sleep(Duration::from_millis(5));
-        client_lock.entry(client_id).or_insert_with(|| Mutex::new(0));
+        client_lock
+            .entry(client_id)
+            .or_insert_with(|| Mutex::new(0));
     }
 
     print_result(bal)?;
@@ -376,3 +379,6 @@ fn _data_vec_from_csv(csv_file: &str) -> Result<Vec<Tx>> {
 
 //     Ok(())
 // }
+
+#[cfg(test)]
+mod tests;
