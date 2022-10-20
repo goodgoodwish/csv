@@ -53,5 +53,7 @@ chargeback
 
 # Tooling
 cargo fmt
+
 cargo test
+
 cargo clippy
