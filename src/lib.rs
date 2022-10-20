@@ -62,8 +62,8 @@ async fn process_file(
             let rw_lock_map = Arc::clone(&rw_lock_map);
             match process_tx_async(x, bal, tx_amt, dispute_txs, rw_lock_map) {
                 Ok(()) => (),
-                Err(_e) => {
-                    // logging.warn!("Error {}", e); // log error into a database or file...etc.
+                Err(e) => {
+                    warn!("Error tx: {}", e); // log error into a database or file...etc.
                 }
             }
             async move { 0_usize }
@@ -77,11 +77,21 @@ async fn process_file(
 }
 
 async fn tx_from_line(line: String) -> Result<Tx> {
+    // tx_type,client,"tx_id","amount"
+    type Record = (String, usize, usize, Option<f64>);
+
     let items = line.split(',').collect::<Vec<&str>>();
     let mut record = StringRecord::from(items);
     record.trim();
-    let tx: Tx = record.deserialize(None)?;
-    debug!("tx {tx:?}");
+    let rec: Record = record.deserialize(None)?;
+    // debug!("rec {rec:?}");
+    let tx = Tx {
+        tx_type: rec.0,
+        client: rec.1,
+        tx_id: rec.2,
+        amount: rec.3.unwrap_or(0.0),
+    };
+    // debug!("tx {tx:?}");
     Ok(tx)
 }
 
@@ -184,12 +194,12 @@ fn deposit(tx: &Tx, bal: &mut Bal, tx_amt: &mut HashMap<usize, f64>) -> Result<(
 fn withdraw(tx: &Tx, bal: &mut Bal, tx_amt: &mut HashMap<usize, f64>) -> Result<()> {
     debug!("withdraw {tx:?}");
     if tx_amt.contains_key(&tx.tx_id) {
-        debug!("TX {} already applied", tx.tx_id);
+        warn!("TX {} already applied", tx.tx_id);
         return Ok(());
     }
     let client = tx.client;
     if !bal.contains_key(&client) {
-        debug!("Warning! Cleint {} not exists", client);
+        warn!("Warning! Cleint {} not exists", client);
         return Ok(());
     }
 
@@ -199,7 +209,7 @@ fn withdraw(tx: &Tx, bal: &mut Bal, tx_amt: &mut HashMap<usize, f64>) -> Result<
         return Ok(());
     }
     if client_data.available < tx.amount {
-        debug!("Warning! Cleint {} not enough balance", client);
+        warn!("Warning! Cleint {} not enough balance", client);
         return Ok(());
     }
     client_data.available -= tx.amount;
@@ -289,7 +299,9 @@ fn chargeback(
         debug!("Warning! tx {} not exists", tx.tx_id);
         return Ok(());
     }
-    client_data.held += tx_amt[&tx.tx_id];
+    debug!("client_data {client_data:?}");
+    debug!("tx_amt {tx_amt:?}");
+    client_data.held -= tx_amt[&tx.tx_id];
     client_data.locked = true;
     Ok(())
 }

@@ -12,6 +12,9 @@ run_stream() is asynce streaming .
 ## to show log output,
 RUST_LOG=debug cargo run -- transactions.csv
 
+# Error handling
+use type Result and anyhow lib.
+
 # Performance and concurrency
 
 ## Streaming

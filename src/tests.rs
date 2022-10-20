@@ -60,15 +60,7 @@ fn withdraw_test() -> Result<()> {
 #[tokio::test]
 async fn dispute_integration_test() -> Result<()> {
     let csv_file = "src/tests/dispute01.csv".to_owned();
-    let mut bal = HashMap::from([(
-        2,
-        Balance {
-            client: 2,
-            available: 10.0,
-            held: 0.0,
-            locked: false,
-        },
-    )]);
+    let mut bal = HashMap::new();
     let mut tx_amt = HashMap::new();
     let mut dispute_txs: HashSet<usize> = HashSet::new();
 
@@ -81,6 +73,47 @@ async fn dispute_integration_test() -> Result<()> {
 
     assert!(is_good);
     assert_eq!(bal[&2].held, exp);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn resolve_integration_test() -> Result<()> {
+    let csv_file = "src/tests/resolve01.csv".to_owned();
+    let mut bal = HashMap::new();
+    let mut tx_amt = HashMap::new();
+    let mut dispute_txs: HashSet<usize> = HashSet::new();
+
+    process_file(csv_file, &mut bal, &mut tx_amt, &mut dispute_txs).await?;
+
+    let exp = -2.0;
+    assert_eq!(bal[&2].held, exp);
+
+    let csv_file = "src/tests/resolve02.csv".to_owned();
+    let mut bal = HashMap::new();
+    let mut tx_amt = HashMap::new();
+    let mut dispute_txs: HashSet<usize> = HashSet::new();
+
+    process_file(csv_file, &mut bal, &mut tx_amt, &mut dispute_txs).await?;
+
+    assert_eq!(bal[&2].available, 2.0);
+    assert_eq!(bal[&2].held, 5.0);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn chargeback_integration_test() -> Result<()> {
+    let csv_file = "src/tests/chargeback01.csv".to_owned();
+    let mut bal = HashMap::new();
+    let mut tx_amt = HashMap::new();
+    let mut dispute_txs: HashSet<usize> = HashSet::new();
+
+    process_file(csv_file, &mut bal, &mut tx_amt, &mut dispute_txs).await?;
+
+    assert_eq!(bal[&2].held, 0.0);
+    assert_eq!(bal[&2].available, 4.0);
+    assert_eq!(bal[&2].locked, true);
 
     Ok(())
 }
