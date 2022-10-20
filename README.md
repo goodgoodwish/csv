@@ -1,6 +1,4 @@
 # process transaction from CSV file
-Rust CSV
-
 There are 2 versions of main program.
 
 run() is real time process.
