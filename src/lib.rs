@@ -1,7 +1,7 @@
 use anyhow::{anyhow, bail, Result};
 use csv::Reader;
 use csv::StringRecord;
-use log::{debug, error, info, log_enabled, Level};
+use log::{debug, info, warn};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -23,6 +23,21 @@ pub async fn run_stream() -> Result<()> {
     let csv_file = input_filename()?;
     debug!("csv_file {csv_file}");
 
+    let mut bal: Bal = HashMap::new();
+    let mut tx_amt: HashMap<usize, f64> = HashMap::new();
+    let mut dispute_txs: HashSet<usize> = HashSet::new();
+    process_file(csv_file, &mut bal, &mut tx_amt, &mut dispute_txs).await?;
+    print_result(&bal)?;
+
+    Ok(())
+}
+
+async fn process_file(
+    csv_file: String,
+    bal: &mut Bal,
+    tx_amt: &mut HashMap<usize, f64>,
+    dispute_txs: &mut HashSet<usize>,
+) -> Result<()> {
     let file = File::open(csv_file)?;
     let reader = BufReader::new(file);
     let mut read_iter = reader.lines();
@@ -31,10 +46,6 @@ pub async fn run_stream() -> Result<()> {
 
     // convert iterator to stream.
     let stream = stream::iter(read_iter);
-
-    let mut bal: Bal = HashMap::new();
-    let mut tx_amt: HashMap<usize, f64> = HashMap::new();
-    let mut dispute_txs: HashSet<usize> = HashSet::new();
     let buf_factor = 5;
 
     // create N RW_locks to distribute and reduce the write_lock wait time, here N = 256, u8 type.
@@ -49,7 +60,7 @@ pub async fn run_stream() -> Result<()> {
         .buffer_unordered(buf_factor)
         .map(|x| {
             let rw_lock_map = Arc::clone(&rw_lock_map);
-            match process_tx_async(x, &mut bal, &mut tx_amt, &mut dispute_txs, rw_lock_map) {
+            match process_tx_async(x, bal, tx_amt, dispute_txs, rw_lock_map) {
                 Ok(()) => (),
                 Err(_e) => {
                     // logging.warn!("Error {}", e); // log error into a database or file...etc.
@@ -62,8 +73,6 @@ pub async fn run_stream() -> Result<()> {
         .await;
     debug!("stream res {res:?}");
 
-    print_result(&bal)?;
-
     Ok(())
 }
 
@@ -72,7 +81,7 @@ async fn tx_from_line(line: String) -> Result<Tx> {
     let mut record = StringRecord::from(items);
     record.trim();
     let tx: Tx = record.deserialize(None)?;
-    // debug!("tx {tx:?}");
+    debug!("tx {tx:?}");
     Ok(tx)
 }
 
@@ -157,14 +166,14 @@ fn deposit(tx: &Tx, bal: &mut Bal, tx_amt: &mut HashMap<usize, f64>) -> Result<(
     }
     let client = tx.client;
     bal.entry(client).or_insert_with(|| {
-        debug!("Cleint {} not exists", client);
+        warn!("Cleint {} not exists", client);
         Balance::new(client)
     });
     // let client_bal = bal.get_mut(&client).unwrap();
     // client_bal.available += tx.amount;
     let client_data = bal.entry(client).or_insert_with(|| Balance::new(client));
     if client_data.locked {
-        debug!("Cleint {} is locked, return", client);
+        warn!("Cleint {} is locked, return", client);
         return Ok(());
     }
     client_data.available += tx.amount;
@@ -320,7 +329,7 @@ fn input_filename() -> Result<String> {
 }
 
 fn print_result(bal: &Bal) -> Result<()> {
-    debug!("client, available, held, total, locked");
+    println!("client, available, held, total, locked");
     for client_bal in bal.values() {
         let Balance {
             client,
@@ -340,6 +349,7 @@ struct Tx {
     client: usize,
     tx_id: usize,
     amount: f64,
+    // amount: Option<f64>,
 }
 
 #[derive(Debug)]
