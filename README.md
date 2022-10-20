@@ -27,18 +27,17 @@ use Mutex to protect concurrent updates on same client.
 In real world, it may use database row level lock to protect concurrent update.
 
 # Test
-
+only did 2 unit tests and 3 integration tests for demo, by limited time. we can easily extend unit tests to cover all the functions, and more integration tests to cover more use cases.
 
 ## Unit test
-only did 2 unit tests for demo by limited time. we can easily extend unit tests to cover all the functions.
 
 ### tx_from_line()
 ### withdraw()
 
 ## Integration test
-deposite
+todo: deposite
 
-withdraw
+todo: withdraw
 
 dispute
 
