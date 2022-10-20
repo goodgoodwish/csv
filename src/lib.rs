@@ -1,6 +1,7 @@
 use anyhow::{anyhow, bail, Result};
 use csv::Reader;
 use csv::StringRecord;
+use log::{debug, error, info, log_enabled, Level};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -14,13 +15,13 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 
-// global variable
-
 type Bal = HashMap<usize, Balance>;
 
 pub async fn run_stream() -> Result<()> {
+    info!("starting up");
+
     let csv_file = input_filename()?;
-    println!("csv_file {csv_file}");
+    debug!("csv_file {csv_file}");
 
     let file = File::open(csv_file)?;
     let reader = BufReader::new(file);
@@ -44,7 +45,7 @@ pub async fn run_stream() -> Result<()> {
     let rw_lock_map = Arc::new(inner);
 
     let res = stream
-        .map(|line| tx_from_line(line.unwrap()) )
+        .map(|line| tx_from_line(line.unwrap()))
         .buffer_unordered(buf_factor)
         .map(|x| {
             let rw_lock_map = Arc::clone(&rw_lock_map);
@@ -52,14 +53,16 @@ pub async fn run_stream() -> Result<()> {
                 Ok(()) => (),
                 Err(_e) => {
                     // logging.warn!("Error {}", e); // log error into a database or file...etc.
-                },
+                }
             }
             async move { 0_usize }
         })
         .buffer_unordered(buf_factor)
         .collect::<Vec<_>>()
         .await;
-    println!("stream res {res:?}");
+    debug!("stream res {res:?}");
+
+    print_result(&bal)?;
 
     Ok(())
 }
@@ -69,6 +72,7 @@ async fn tx_from_line(line: String) -> Result<Tx> {
     let mut record = StringRecord::from(items);
     record.trim();
     let tx: Tx = record.deserialize(None)?;
+    // debug!("tx {tx:?}");
     Ok(tx)
 }
 
@@ -110,13 +114,12 @@ fn process_tx_async(
             .or_insert_with(|| Mutex::new(0));
     }
 
-    print_result(bal)?;
     Ok(())
 }
 
 pub fn run() -> Result<()> {
     let csv_file = input_filename()?;
-    println!("csv_file {csv_file}");
+    debug!("csv_file {csv_file}");
 
     let txs = data_from_csv_trim(&csv_file)?;
     process_tx(&txs)?;
@@ -140,28 +143,28 @@ fn process_tx(txs: &[Tx]) -> Result<()> {
         }
     }
 
-    // println!("tx_amt {tx_amt:?}");
+    println!("tx_amt {tx_amt:?}");
     print_result(&bal)?;
 
     Ok(())
 }
 
 fn deposit(tx: &Tx, bal: &mut Bal, tx_amt: &mut HashMap<usize, f64>) -> Result<()> {
-    println!("deposit {tx:?}");
+    debug!("deposit {tx:?}");
     if tx_amt.contains_key(&tx.tx_id) {
-        println!("TX {} already applied", tx.tx_id);
+        debug!("TX {} already applied", tx.tx_id);
         return Ok(());
     }
     let client = tx.client;
     bal.entry(client).or_insert_with(|| {
-        println!("Cleint {} not exists", client);
+        debug!("Cleint {} not exists", client);
         Balance::new(client)
     });
     // let client_bal = bal.get_mut(&client).unwrap();
     // client_bal.available += tx.amount;
     let client_data = bal.entry(client).or_insert_with(|| Balance::new(client));
     if client_data.locked {
-        println!("Cleint {} is locked, return", client);
+        debug!("Cleint {} is locked, return", client);
         return Ok(());
     }
     client_data.available += tx.amount;
@@ -170,24 +173,24 @@ fn deposit(tx: &Tx, bal: &mut Bal, tx_amt: &mut HashMap<usize, f64>) -> Result<(
 }
 
 fn withdraw(tx: &Tx, bal: &mut Bal, tx_amt: &mut HashMap<usize, f64>) -> Result<()> {
-    println!("withdraw {tx:?}");
+    debug!("withdraw {tx:?}");
     if tx_amt.contains_key(&tx.tx_id) {
-        println!("TX {} already applied", tx.tx_id);
+        debug!("TX {} already applied", tx.tx_id);
         return Ok(());
     }
     let client = tx.client;
     if !bal.contains_key(&client) {
-        println!("Warning! Cleint {} not exists", client);
+        debug!("Warning! Cleint {} not exists", client);
         return Ok(());
     }
 
     let client_data = bal.entry(client).or_insert_with(|| Balance::new(client));
     if client_data.locked {
-        println!("Cleint {} is locked, return", client);
+        debug!("Cleint {} is locked, return", client);
         return Ok(());
     }
     if client_data.available < tx.amount {
-        println!("Warning! Cleint {} not enough balance", client);
+        debug!("Warning! Cleint {} not enough balance", client);
         return Ok(());
     }
     client_data.available -= tx.amount;
@@ -201,24 +204,24 @@ fn dispute(
     tx_amt: &mut HashMap<usize, f64>,
     dispute_txs: &mut HashSet<usize>,
 ) -> Result<()> {
-    println!("dispute {tx:?}");
+    debug!("dispute {tx:?}");
     let client = tx.client;
     if !bal.contains_key(&client) {
-        println!("Warning! Cleint {} not exists", client);
+        debug!("Warning! Cleint {} not exists", client);
         return Ok(());
     }
     if !tx_amt.contains_key(&tx.tx_id) {
-        println!("Warning! tx {} not exists", tx.tx_id);
+        debug!("Warning! tx {} not exists", tx.tx_id);
         return Ok(());
     }
 
     let client_data = bal.entry(client).or_insert_with(|| Balance::new(client));
     if client_data.locked {
-        println!("Warning! Cleint {} is locked, return", client);
+        debug!("Warning! Cleint {} is locked, return", client);
         return Ok(());
     }
     if dispute_txs.contains(&tx.tx_id) {
-        println!("Warning! dispute tx {} already applied", tx.tx_id);
+        debug!("Warning! dispute tx {} already applied", tx.tx_id);
         return Ok(());
     }
     dispute_txs.insert(tx.tx_id);
@@ -233,20 +236,20 @@ fn resolve(
     tx_amt: &mut HashMap<usize, f64>,
     dispute_txs: &mut HashSet<usize>,
 ) -> Result<()> {
-    println!("resolve {tx:?}");
+    debug!("resolve {tx:?}");
     if !dispute_txs.contains(&tx.tx_id) {
-        println!("Warning! dispute tx {} not exists", tx.tx_id);
+        debug!("Warning! dispute tx {} not exists", tx.tx_id);
         return Ok(());
     }
 
     let client = tx.client;
     if !bal.contains_key(&client) {
-        println!("Warning! Cleint {} not exists", client);
+        debug!("Warning! Cleint {} not exists", client);
         return Ok(());
     }
     let client_data = bal.entry(client).or_insert_with(|| Balance::new(client));
     if !tx_amt.contains_key(&tx.tx_id) {
-        println!("Warning! tx {} not exists", tx.tx_id);
+        debug!("Warning! tx {} not exists", tx.tx_id);
         return Ok(());
     }
     client_data.available += tx_amt[&tx.tx_id];
@@ -261,20 +264,20 @@ fn chargeback(
     tx_amt: &mut HashMap<usize, f64>,
     dispute_txs: &mut HashSet<usize>,
 ) -> Result<()> {
-    println!("chargeback {tx:?}");
+    debug!("chargeback {tx:?}");
     if !dispute_txs.contains(&tx.tx_id) {
-        println!("Warning! dispute tx {} not exists", tx.tx_id);
+        debug!("Warning! dispute tx {} not exists", tx.tx_id);
         return Ok(());
     }
 
     let client = tx.client;
     if !bal.contains_key(&client) {
-        println!("Warning! Cleint {} not exists", client);
+        debug!("Warning! Cleint {} not exists", client);
         return Ok(());
     }
     let client_data = bal.entry(client).or_insert_with(|| Balance::new(client));
     if !tx_amt.contains_key(&tx.tx_id) {
-        println!("Warning! tx {} not exists", tx.tx_id);
+        debug!("Warning! tx {} not exists", tx.tx_id);
         return Ok(());
     }
     client_data.held += tx_amt[&tx.tx_id];
@@ -317,7 +320,7 @@ fn input_filename() -> Result<String> {
 }
 
 fn print_result(bal: &Bal) -> Result<()> {
-    println!("client, available, held, total, locked");
+    debug!("client, available, held, total, locked");
     for client_bal in bal.values() {
         let Balance {
             client,
@@ -362,7 +365,7 @@ fn _rec_from_csv(csv_file: &str) -> Result<()> {
     let mut rdr = Reader::from_path(csv_file)?;
     for result in rdr.records() {
         let record = result?;
-        println!("{:?}", record);
+        debug!("{:?}", record);
     }
     Ok(())
 }
@@ -372,7 +375,7 @@ fn _data_vec_from_csv(csv_file: &str) -> Result<Vec<Tx>> {
     let mut res: Vec<Tx> = vec![];
     for row in rdr.deserialize() {
         let tx: Tx = row?;
-        println!("{tx:?}",);
+        debug!("{tx:?}",);
         res.push(tx);
     }
     Ok(res)
