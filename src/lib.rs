@@ -44,7 +44,7 @@ pub async fn run_stream() -> Result<()> {
     let rw_lock_map = Arc::new(inner);
 
     let res = stream
-        .map(|line| get_tx(line.unwrap()) )
+        .map(|line| tx_from_line(line.unwrap()) )
         .buffer_unordered(buf_factor)
         .map(|x| {
             let rw_lock_map = Arc::clone(&rw_lock_map);
@@ -64,7 +64,7 @@ pub async fn run_stream() -> Result<()> {
     Ok(())
 }
 
-async fn get_tx(line: String) -> Result<Tx> {
+async fn tx_from_line(line: String) -> Result<Tx> {
     let items = line.split(',').collect::<Vec<&str>>();
     let mut record = StringRecord::from(items);
     record.trim();
