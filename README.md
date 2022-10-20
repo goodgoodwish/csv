@@ -10,7 +10,7 @@ run_stream() is asynce streaming .
 # Run
 
 ## to show log output,
-RUST_LOG=debug cargo run -- transactions.csv
+$> RUST_LOG=debug cargo run -- transactions.csv
 
 # Error handling
 use type Result and anyhow lib.
@@ -28,6 +28,9 @@ In real world, it may use database row level lock to protect concurrent update.
 
 # Test
 only did 2 unit tests and 3 integration tests for demo, by limited time. we can easily extend unit tests to cover all the functions, and more integration tests to cover more use cases.
+
+## Test plan
+$> cargo test
 
 ## Unit test
 
