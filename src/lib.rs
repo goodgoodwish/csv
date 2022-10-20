@@ -16,6 +16,35 @@ use std::thread;
 use std::time::Duration;
 
 type Bal = HashMap<usize, Balance>;
+type ReadWriteLockMap = Arc<HashMap<u8, RwLock<HashMap<usize, Mutex<()>>>>>;
+
+#[derive(Debug, Deserialize, PartialEq)]
+struct Tx {
+    tx_type: String,
+    client: usize,
+    tx_id: usize,
+    amount: f64,
+    // amount: Option<f64>,
+}
+
+#[derive(Debug, PartialEq)]
+struct Balance {
+    client: usize,
+    available: f64,
+    held: f64,
+    locked: bool,
+}
+
+impl Balance {
+    fn new(client: usize) -> Self {
+        Balance {
+            client,
+            available: 0.0,
+            held: 0.0,
+            locked: false,
+        }
+    }
+}
 
 pub async fn run_stream() -> Result<()> {
     info!("starting up");
@@ -55,9 +84,9 @@ async fn process_file(
     }
     let rw_lock_map = Arc::new(inner);
 
-    let res = stream
+    stream
         .map(|line| tx_from_line(line.unwrap()))
-        .buffer_unordered(buf_factor)
+        .buffered(buf_factor)
         .map(|x| {
             let rw_lock_map = Arc::clone(&rw_lock_map);
             match process_tx_async(x, bal, tx_amt, dispute_txs, rw_lock_map) {
@@ -66,18 +95,18 @@ async fn process_file(
                     warn!("Error tx: {}", e); // log error into a database or file...etc.
                 }
             }
-            async move { 0_usize }
+            // return a future for buffered() input.
+            async move { () }
         })
-        .buffer_unordered(buf_factor)
+        .buffered(buf_factor)
         .collect::<Vec<_>>()
         .await;
-    debug!("stream res {res:?}");
 
     Ok(())
 }
 
 async fn tx_from_line(line: String) -> Result<Tx> {
-    // tx_type,client,"tx_id","amount"
+    // data format: tx_type,client,"tx_id","amount"
     type Record = (String, usize, usize, Option<f64>);
 
     let items = line.split(',').collect::<Vec<&str>>();
@@ -100,7 +129,7 @@ fn process_tx_async(
     bal: &mut Bal,
     tx_amt: &mut HashMap<usize, f64>,
     dispute_txs: &mut HashSet<usize>,
-    rw_lock_map: Arc<HashMap<u8, RwLock<HashMap<usize, Mutex<usize>>>>>,
+    rw_lock_map: ReadWriteLockMap,
 ) -> Result<()> {
     let tx = &tx?;
     let client_id = tx.client;
@@ -130,7 +159,7 @@ fn process_tx_async(
         thread::sleep(Duration::from_millis(5));
         client_lock
             .entry(client_id)
-            .or_insert_with(|| Mutex::new(0));
+            .or_insert_with(|| Mutex::new(()));
     }
 
     Ok(())
@@ -353,34 +382,6 @@ fn print_result(bal: &Bal) -> Result<()> {
         println!("{client}, {available}, {held}, {total}, {locked}");
     }
     Ok(())
-}
-
-#[derive(Debug, Deserialize, PartialEq)]
-struct Tx {
-    tx_type: String,
-    client: usize,
-    tx_id: usize,
-    amount: f64,
-    // amount: Option<f64>,
-}
-
-#[derive(Debug)]
-struct Balance {
-    client: usize,
-    available: f64,
-    held: f64,
-    locked: bool,
-}
-
-impl Balance {
-    fn new(client: usize) -> Self {
-        Balance {
-            client,
-            available: 0.0,
-            held: 0.0,
-            locked: false,
-        }
-    }
 }
 
 fn _rec_from_csv(csv_file: &str) -> Result<()> {

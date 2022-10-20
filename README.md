@@ -18,7 +18,10 @@ use type Result and anyhow lib.
 # Performance and concurrency
 
 ## Streaming
-async parallel processing by streaming buffer_unordered.
+async parallel processing by streaming buffered(), buffer up stream items to at most n futures.
+buffer_unordered() may generate bad state data.
+
+Todo: multi thread. send transaction requests for same client to same thread may help improve the throughput.
 
 ## Concurrency
 use RW lock for create a new client.
@@ -47,3 +50,8 @@ dispute
 resolve
 
 chargeback
+
+# Tooling
+cargo fmt
+cargo test
+cargo clippy

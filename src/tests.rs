@@ -7,7 +7,7 @@ fn it_works() {
 
 #[tokio::test]
 async fn tx_from_line_test() -> Result<()> {
-    let input = "deposit,2,2,2.0".to_owned();
+    let input = "deposit, 2, 2, 2.0".to_owned();
     let res = tx_from_line(input).await?;
     let exp = Tx {
         tx_type: "deposit".to_owned(),
@@ -66,13 +66,14 @@ async fn dispute_integration_test() -> Result<()> {
 
     process_file(csv_file, &mut bal, &mut tx_amt, &mut dispute_txs).await?;
 
-    let exp = -2.2;
-    let is_good = (bal[&2].held - exp).abs() < 0.0001;
-    println!("is_good {is_good:?}");
-    debug!("is_good {is_good:?}");
+    let expect_res = Balance {
+        client: 2,
+        available: 5.0,
+        held: -2.2,
+        locked: false,
+    };
 
-    assert!(is_good);
-    assert_eq!(bal[&2].held, exp);
+    assert_eq!(bal[&2], expect_res);
 
     Ok(())
 }
@@ -98,6 +99,7 @@ async fn resolve_integration_test() -> Result<()> {
 
     assert_eq!(bal[&2].available, 2.0);
     assert_eq!(bal[&2].held, 5.0);
+    assert_eq!(bal[&2].locked, false);
 
     Ok(())
 }
