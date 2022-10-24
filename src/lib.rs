@@ -136,9 +136,10 @@ fn process_tx_async(
     loop {
         let rw_lock_id = client_id as u8; // id % 256, map client_id to a rw_lock,
         let rw_lock = &rw_lock_map[&rw_lock_id]; // prefilled, must exists.
-                                                 // Assume that the element already exists
-        let client_lock = rw_lock.read().expect("RwLock poisoned");
-        if let Some(data_lock) = client_lock.get(&client_id) {
+        let client_read_lock = rw_lock.read().expect("RwLock poisoned");
+
+        // Assume that the element <client_id here> already exists
+        if let Some(data_lock) = client_read_lock.get(&client_id) {
             let mut _lock = data_lock.lock().expect("Mutex poisoned");
 
             match &tx.tx_type[..] {
@@ -151,13 +152,13 @@ fn process_tx_async(
             }
             break;
         }
-        drop(client_lock);
-        let mut client_lock = rw_lock.write().expect("RwLock poisoned");
+        drop(client_read_lock);
 
+        let mut client_write_lock = rw_lock.write().expect("RwLock poisoned");
         // We use HashMap::entry to handle the case when another thread
         // inserted the same key, while it is unlocked.
         thread::sleep(Duration::from_millis(5));
-        client_lock
+        client_write_lock
             .entry(client_id)
             .or_insert_with(|| Mutex::new(()));
     }
@@ -199,22 +200,12 @@ fn process_tx(txs: &[Tx]) -> Result<()> {
 
 fn deposit(tx: &Tx, bal: &mut Bal, tx_amt: &mut HashMap<usize, f64>) -> Result<()> {
     debug!("deposit {tx:?}");
-    if tx_amt.contains_key(&tx.tx_id) {
-        debug!("TX {} already applied", tx.tx_id);
+    if !is_tx_valid(tx, bal, tx_amt) {
         return Ok(());
     }
+
     let client = tx.client;
-    bal.entry(client).or_insert_with(|| {
-        warn!("Cleint {} not exists", client);
-        Balance::new(client)
-    });
-    // let client_bal = bal.get_mut(&client).unwrap();
-    // client_bal.available += tx.amount;
-    let client_data = bal.entry(client).or_insert_with(|| Balance::new(client));
-    if client_data.locked {
-        warn!("Cleint {} is locked, return", client);
-        return Ok(());
-    }
+    let client_data = bal.get_mut(&client).unwrap();
     client_data.available += tx.amount;
     tx_amt.insert(tx.tx_id, tx.amount);
     Ok(())
@@ -222,23 +213,14 @@ fn deposit(tx: &Tx, bal: &mut Bal, tx_amt: &mut HashMap<usize, f64>) -> Result<(
 
 fn withdraw(tx: &Tx, bal: &mut Bal, tx_amt: &mut HashMap<usize, f64>) -> Result<()> {
     debug!("withdraw {tx:?}");
-    if tx_amt.contains_key(&tx.tx_id) {
-        warn!("TX {} already applied", tx.tx_id);
-        return Ok(());
-    }
-    let client = tx.client;
-    if !bal.contains_key(&client) {
-        warn!("Warning! Cleint {} not exists", client);
+    if !is_tx_valid(tx, bal, tx_amt) {
         return Ok(());
     }
 
-    let client_data = bal.entry(client).or_insert_with(|| Balance::new(client));
-    if client_data.locked {
-        debug!("Cleint {} is locked, return", client);
-        return Ok(());
-    }
+    let client = tx.client;
+    let client_data = bal.get_mut(&client).unwrap();
     if client_data.available < tx.amount {
-        warn!("Warning! Cleint {} not enough balance", client);
+        warn!("Warning! Cleint {} not have enough balance", client);
         return Ok(());
     }
     client_data.available -= tx.amount;
@@ -333,6 +315,32 @@ fn chargeback(
     client_data.held -= tx_amt[&tx.tx_id];
     client_data.locked = true;
     Ok(())
+}
+
+fn is_tx_valid(tx: &Tx, bal: &mut Bal, tx_amt: &mut HashMap<usize, f64>) -> bool {
+    if tx_amt.contains_key(&tx.tx_id) {
+        debug!("TX {} already applied", tx.tx_id);
+        return false;
+    }
+    let client = tx.client;
+    if &tx.tx_type[..] == "deposit" {
+        bal.entry(client).or_insert_with(|| {
+            warn!("Cleint {} not exists", client);
+            Balance::new(client)
+        });
+    }
+    if !bal.contains_key(&client) {
+        debug!("Warning! Cleint {} not exists", client);
+        return false;
+    }
+
+    let client_data = &bal[&client];
+    if client_data.locked {
+        warn!("Cleint {} is locked, return", client);
+        return false;
+    }
+
+    true
 }
 
 fn _data_from_csv_no_space(csv_file: &str) -> Result<Vec<Tx>> {
