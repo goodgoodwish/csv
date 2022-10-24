@@ -205,7 +205,7 @@ fn deposit(tx: &Tx, bal: &mut Bal, tx_amt: &mut HashMap<usize, f64>) -> Result<(
     }
 
     let client = tx.client;
-    let client_data = bal.get_mut(&client).unwrap();
+    let client_data = bal.get_mut(&client).ok_or(anyhow!("bad client"))?;
     client_data.available += tx.amount;
     tx_amt.insert(tx.tx_id, tx.amount);
     Ok(())
@@ -218,7 +218,7 @@ fn withdraw(tx: &Tx, bal: &mut Bal, tx_amt: &mut HashMap<usize, f64>) -> Result<
     }
 
     let client = tx.client;
-    let client_data = bal.get_mut(&client).unwrap();
+    let client_data = bal.get_mut(&client).ok_or(anyhow!("bad client"))?;
     if client_data.available < tx.amount {
         warn!("Warning! Cleint {} not have enough balance", client);
         return Ok(());
